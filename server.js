@@ -153,6 +153,3 @@ START SERVER
 app.listen(3000, () => {
   console.log("Upload worker running on port 3000");
 });
-
-console.log("Frame link:", frameLink);
-console.log("Thumbnail URL:", thumbnailUrl);
