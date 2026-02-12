@@ -1,9 +1,12 @@
 import express from "express";
 import axios from "axios";
 import { google } from "googleapis";
+import multer from "multer";
 
 const app = express();
-app.use(express.json());
+
+// multer for binary upload
+const upload = multer();
 
 /*
 ------------------------------------
@@ -30,7 +33,7 @@ const youtube = google.youtube({
 UPLOAD ENDPOINT
 ------------------------------------
 */
-app.post("/upload", async (req, res) => {
+app.post("/upload", upload.single("thumbnail"), async (req, res) => {
 
   // respond immediately (prevents Render timeout)
   res.json({
@@ -41,7 +44,13 @@ app.post("/upload", async (req, res) => {
   (async () => {
     try {
 
-      const { frameLink, thumbnailUrl, title, description, tags } = req.body;
+      // form-data fields come as strings
+      const frameLink = req.body.frameLink;
+      const title = req.body.title;
+      const description = req.body.description;
+
+      // tags sent as stringified JSON from n8n
+      const tags = JSON.parse(req.body.tags || "[]");
 
       console.log("Starting upload:", title);
 
@@ -66,7 +75,7 @@ app.post("/upload", async (req, res) => {
             tags
           },
           status: {
-            privacyStatus: "unlisted" // ✅ changed here
+            privacyStatus: "unlisted"
           }
         },
         media: {
@@ -79,21 +88,15 @@ app.post("/upload", async (req, res) => {
       console.log("Upload completed:", videoId);
 
       // -----------------------------
-      // UPLOAD THUMBNAIL
+      // UPLOAD THUMBNAIL (FROM BINARY)
       // -----------------------------
-      if (thumbnailUrl) {
+      if (req.file) {
         console.log("Uploading thumbnail...");
-
-        const thumbnailStream = await axios({
-          method: "GET",
-          url: thumbnailUrl,
-          responseType: "stream"
-        });
 
         await youtube.thumbnails.set({
           videoId: videoId,
           media: {
-            body: thumbnailStream.data
+            body: Buffer.from(req.file.buffer)
           }
         });
 
