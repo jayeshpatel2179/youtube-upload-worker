@@ -7,12 +7,21 @@ app.use(express.json());
 
 /*
 ------------------------------------
-YouTube Client
+YouTube OAuth2 Client
 ------------------------------------
 */
+const oauth2Client = new google.auth.OAuth2(
+  process.env.CLIENT_ID,
+  process.env.CLIENT_SECRET
+);
+
+oauth2Client.setCredentials({
+  refresh_token: process.env.REFRESH_TOKEN
+});
+
 const youtube = google.youtube({
   version: "v3",
-  auth: process.env.YOUTUBE_ACCESS_TOKEN
+  auth: oauth2Client
 });
 
 
@@ -23,12 +32,12 @@ UPLOAD ENDPOINT
 */
 app.post("/upload", async (req, res) => {
 
-  // ✅ respond immediately (IMPORTANT)
+  // respond immediately (prevents Render timeout)
   res.json({
     status: "upload_started"
   });
 
-  // run upload in background
+  // background upload
   (async () => {
     try {
 
@@ -60,10 +69,35 @@ app.post("/upload", async (req, res) => {
         }
       });
 
-      console.log("Upload completed:", response.data.id);
+      const videoId = response.data.id;
+
+      console.log("Upload completed:", videoId);
+
+      // ✅ send success back to n8n
+      if (process.env.N8N_WEBHOOK_URL) {
+        await axios.post(process.env.N8N_WEBHOOK_URL, {
+          status: "success",
+          videoId,
+          title
+        });
+      }
 
     } catch (err) {
-      console.error("Upload failed:", err.response?.data || err.message);
+
+      const errorMessage =
+        err.response?.data?.error?.message ||
+        err.message ||
+        "Upload failed";
+
+      console.error("Upload failed:", errorMessage);
+
+      // ✅ send failure back to n8n
+      if (process.env.N8N_WEBHOOK_URL) {
+        await axios.post(process.env.N8N_WEBHOOK_URL, {
+          status: "failed",
+          error: errorMessage
+        });
+      }
     }
   })();
 
@@ -72,7 +106,7 @@ app.post("/upload", async (req, res) => {
 
 /*
 ------------------------------------
-HEALTH CHECK (OPTIONAL)
+HEALTH CHECK
 ------------------------------------
 */
 app.get("/", (req, res) => {
