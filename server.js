@@ -41,17 +41,22 @@ app.post("/upload", async (req, res) => {
   (async () => {
     try {
 
-      const { frameLink, title, description, tags } = req.body;
+      const { frameLink, thumbnailUrl, title, description, tags } = req.body;
 
       console.log("Starting upload:", title);
 
-      // stream video from frame.io
+      // -----------------------------
+      // STREAM VIDEO FROM FRAME.IO
+      // -----------------------------
       const videoStream = await axios({
         method: "GET",
         url: frameLink,
         responseType: "stream"
       });
 
+      // -----------------------------
+      // UPLOAD VIDEO (UNLISTED)
+      // -----------------------------
       const response = await youtube.videos.insert({
         part: "snippet,status",
         requestBody: {
@@ -61,7 +66,7 @@ app.post("/upload", async (req, res) => {
             tags
           },
           status: {
-            privacyStatus: "public"
+            privacyStatus: "unlisted" // ✅ changed here
           }
         },
         media: {
@@ -73,7 +78,31 @@ app.post("/upload", async (req, res) => {
 
       console.log("Upload completed:", videoId);
 
-      // ✅ send success back to n8n
+      // -----------------------------
+      // UPLOAD THUMBNAIL
+      // -----------------------------
+      if (thumbnailUrl) {
+        console.log("Uploading thumbnail...");
+
+        const thumbnailStream = await axios({
+          method: "GET",
+          url: thumbnailUrl,
+          responseType: "stream"
+        });
+
+        await youtube.thumbnails.set({
+          videoId: videoId,
+          media: {
+            body: thumbnailStream.data
+          }
+        });
+
+        console.log("Thumbnail uploaded successfully");
+      }
+
+      // -----------------------------
+      // SEND SUCCESS BACK TO N8N
+      // -----------------------------
       if (process.env.N8N_WEBHOOK_URL) {
         await axios.post(process.env.N8N_WEBHOOK_URL, {
           status: "success",
@@ -91,7 +120,9 @@ app.post("/upload", async (req, res) => {
 
       console.error("Upload failed:", errorMessage);
 
-      // ✅ send failure back to n8n
+      // -----------------------------
+      // SEND FAILURE BACK TO N8N
+      // -----------------------------
       if (process.env.N8N_WEBHOOK_URL) {
         await axios.post(process.env.N8N_WEBHOOK_URL, {
           status: "failed",
