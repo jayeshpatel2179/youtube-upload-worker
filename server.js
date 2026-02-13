@@ -5,8 +5,15 @@ import multer from "multer";
 
 const app = express();
 
-// multer for binary upload
-const upload = multer();
+// IMPORTANT for large uploads
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+// multer for binary upload (memory storage)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 } // 20MB thumbnail limit
+});
 
 /*
 ------------------------------------
@@ -35,38 +42,45 @@ UPLOAD ENDPOINT
 */
 app.post("/upload", upload.single("thumbnail"), async (req, res) => {
 
-  // respond immediately (prevents Render timeout)
-  res.json({
-    status: "upload_started"
-  });
+  // respond immediately (Render timeout protection)
+  res.json({ status: "upload_started" });
 
-  // background upload
   (async () => {
     try {
 
-      // form-data fields come as strings
       const frameLink = req.body.frameLink;
       const title = req.body.title;
       const description = req.body.description;
 
-      // tags sent as stringified JSON from n8n
-      const tags = JSON.parse(req.body.tags || "[]");
+      // SAFE TAG PARSE
+      let tags = [];
+      try {
+        tags = Array.isArray(req.body.tags)
+          ? req.body.tags
+          : JSON.parse(req.body.tags || "[]");
+      } catch {
+        tags = [];
+      }
 
       console.log("Starting upload:", title);
 
-      // -----------------------------
-      // STREAM VIDEO FROM FRAME.IO
-      // -----------------------------
+      /*
+      ------------------------------------
+      STREAM VIDEO FROM FRAME.IO
+      ------------------------------------
+      */
       const videoStream = await axios({
         method: "GET",
         url: frameLink,
         responseType: "stream"
       });
 
-      // -----------------------------
-      // UPLOAD VIDEO (UNLISTED)
-      // -----------------------------
-      const response = await youtube.videos.insert({
+      /*
+      ------------------------------------
+      UPLOAD VIDEO (UNLISTED)
+      ------------------------------------
+      */
+      const uploadResponse = await youtube.videos.insert({
         part: "snippet,status",
         requestBody: {
           snippet: {
@@ -83,19 +97,28 @@ app.post("/upload", upload.single("thumbnail"), async (req, res) => {
         }
       });
 
-      const videoId = response.data.id;
+      const videoId = uploadResponse.data.id;
+      console.log("Video uploaded:", videoId);
 
-      console.log("Upload completed:", videoId);
+      /*
+      ------------------------------------
+      WAIT BEFORE THUMBNAIL (IMPORTANT)
+      ------------------------------------
+      */
+      await new Promise(resolve => setTimeout(resolve, 8000));
 
-      // -----------------------------
-      // UPLOAD THUMBNAIL (FROM BINARY)
-      // -----------------------------
+      /*
+      ------------------------------------
+      UPLOAD THUMBNAIL
+      ------------------------------------
+      */
       if (req.file) {
         console.log("Uploading thumbnail...");
 
         await youtube.thumbnails.set({
-          videoId: videoId,
+          videoId,
           media: {
+            mimeType: req.file.mimetype,
             body: Buffer.from(req.file.buffer)
           }
         });
@@ -103,15 +126,19 @@ app.post("/upload", upload.single("thumbnail"), async (req, res) => {
         console.log("Thumbnail uploaded successfully");
       }
 
-      // -----------------------------
-      // SEND SUCCESS BACK TO N8N
-      // -----------------------------
+      /*
+      ------------------------------------
+      SEND SUCCESS BACK TO N8N
+      ------------------------------------
+      */
       if (process.env.N8N_WEBHOOK_URL) {
         await axios.post(process.env.N8N_WEBHOOK_URL, {
           status: "success",
           videoId,
           title
         });
+
+        console.log("Webhook sent");
       }
 
     } catch (err) {
@@ -123,9 +150,6 @@ app.post("/upload", upload.single("thumbnail"), async (req, res) => {
 
       console.error("Upload failed:", errorMessage);
 
-      // -----------------------------
-      // SEND FAILURE BACK TO N8N
-      // -----------------------------
       if (process.env.N8N_WEBHOOK_URL) {
         await axios.post(process.env.N8N_WEBHOOK_URL, {
           status: "failed",
@@ -134,7 +158,6 @@ app.post("/upload", upload.single("thumbnail"), async (req, res) => {
       }
     }
   })();
-
 });
 
 
